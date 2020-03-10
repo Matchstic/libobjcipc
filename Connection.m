@@ -11,27 +11,17 @@
 #import "IPC.h"
 #import "Message.h"
 
-// ticks every 10 seconds; then auto disconnect after 6 ticks (1 minute)
-// ticks could be reset when there is any activity in socket connection
-// (e.g. receive new messages, either end closes connection)
-#define OBJCIPC_AUTODISCONNECT_TICKTIME 10.0
-#define OBJCIPC_AUTODISCONNECT_TICKS 6
-
-// ensure the handler is executed on main thread
-static inline void executeOnMainThread(void (^block)(void)) {
-	if (![NSThread isMainThread]) {
-		dispatch_sync(dispatch_get_main_queue(), block);
-	} else {
-		block();
-	}
-}
+#define MAX_CONTENT_LENGTH 65536
 
 static char pendingIncomingMessageNameKey;
 static char pendingIncomingMessageIdentifierKey;
 
 @implementation OBJCIPCConnection
 
-- (instancetype)initWithInputStream:(NSInputStream *)inputStream outputStream:(NSOutputStream *)outputStream {
+- (instancetype)initWithInputStream:(NSInputStream *)inputStream
+                       outputStream:(NSOutputStream *)outputStream
+              incomingDispatchQueue:(dispatch_queue_t)incomingQueue
+              outgoingDispatchQueue:(dispatch_queue_t)outgoingQueue {
 	
 	if ((self = [super init])) {
 		
@@ -48,8 +38,10 @@ static char pendingIncomingMessageIdentifierKey;
 		[outputStream open];
 		
 		// keep references
-		_inputStream = [inputStream retain];
-		_outputStream = [outputStream retain];
+		_inputStream = inputStream;
+		_outputStream = outputStream;
+        _incomingDispatchQueue = incomingQueue;
+        _outgoingDispatchQueue = outgoingQueue;
 	}
 	
 	return self;
@@ -59,38 +51,40 @@ static char pendingIncomingMessageIdentifierKey;
 	
 	if (_closedConnection) return;
 	
-	// auto assign the next message identifier
-	if (message.messageIdentifier == nil) {
-		message.messageIdentifier = [self nextMessageIdentifier];
-	}
-	
-	#if LOG_MESSAGE_BODY
-		IPCLOG(@"<Connection> Send message to app with identifier <%@>", self.appIdentifier);
-	#else
-		IPCLOG(@"<Connection> Send message to app with identifier <%@> <message: %@>", self.appIdentifier, message);
-	#endif
-	
-	OBJCIPCReplyHandler replyHandler = message.replyHandler;
-	NSString *messageIdentifier = message.messageIdentifier;
-	NSData *data = [message messageData];
-	
-	if (data == nil) {
-		IPCLOG(@"<Connection> Unable to retrieve the message data");
-		return;
-	}
-	
-	// set reply handler
-	if (replyHandler != nil) {
-		if (_replyHandlers == nil) _replyHandlers = [NSMutableDictionary new];
-		_replyHandlers[messageIdentifier] = replyHandler;
-	}
-	
-	// append outgoing message data
-	if (_outgoingMessageData == nil) _outgoingMessageData = [NSMutableData new];
-	[_outgoingMessageData appendData:data];
-	
-	// write data to the output stream
-	[self _writeOutgoingMessageData];
+    dispatch_async(_outgoingDispatchQueue, ^{
+        // auto assign the next message identifier
+        if (message.messageIdentifier == nil) {
+            message.messageIdentifier = [self nextMessageIdentifier];
+        }
+        
+        #if LOG_MESSAGE_BODY
+            IPCLOG(@"<Connection> Send message to app with identifier <%@>", self.appIdentifier);
+        #else
+            IPCLOG(@"<Connection> Send message to app with identifier <%@> <message: %@>", self.appIdentifier, message);
+        #endif
+        
+        OBJCIPCReplyHandler replyHandler = message.replyHandler;
+        NSString *messageIdentifier = message.messageIdentifier;
+        NSData *data = [message messageData];
+        
+        if (data == nil) {
+            IPCLOG(@"<Connection> Unable to retrieve the message data");
+            return;
+        }
+        
+        // set reply handler
+        if (replyHandler != nil) {
+            if (self->_replyHandlers == nil) self->_replyHandlers = [NSMutableDictionary new];
+            self->_replyHandlers[messageIdentifier] = replyHandler;
+        }
+        
+        // append outgoing message data
+        if (self->_outgoingMessageData == nil) self->_outgoingMessageData = [NSMutableData new];
+        [self->_outgoingMessageData appendData:data];
+        
+        // write data to the output stream
+        [self _writeOutgoingMessageData];
+    });
 }
 
 - (void)closeConnection {
@@ -99,9 +93,6 @@ static char pendingIncomingMessageIdentifierKey;
 	_closedConnection = YES;
 	
 	IPCLOG(@"<Connection> Close connection <%@>", self);
-	
-	// invalidate the timer
-	[self _invalidateAutoDisconnectTimer];
 	
 	// reset all receiving message state
 	[self _resetReceivingMessageState];
@@ -119,25 +110,23 @@ static char pendingIncomingMessageIdentifierKey;
 	[_outputStream close];
 	
 	// release streams
-	[_inputStream release], _inputStream = nil;
-	[_outputStream release], _outputStream = nil;
+	_inputStream = nil;
+	_outputStream = nil;
 	
 	// reply nil messages to all reply listener
 	if (_replyHandlers != nil && [_replyHandlers count] > 0) {
 		for (NSString *key in _replyHandlers) {
 			OBJCIPCReplyHandler handler = _replyHandlers[key];
 			if (handler != nil) {
-				executeOnMainThread(^{
-					handler(nil);
-				});
+                handler(nil);
 			}
 		}
 	}
 	
-	[_replyHandlers release], _replyHandlers = nil;
-	[_outgoingMessageData release], _outgoingMessageData = nil;
-	[_incomingMessageHandlers release], _incomingMessageHandlers = nil;
-	[_pendingIncomingMessages release], _pendingIncomingMessages = nil;
+	_replyHandlers = nil;
+	_outgoingMessageData = nil;
+	_incomingMessageHandlers = nil;
+	_pendingIncomingMessages = nil;
 	
 	// notify the main instance
 	[[OBJCIPC sharedInstance] notifyConnectionIsClosed:self];
@@ -176,7 +165,7 @@ static char pendingIncomingMessageIdentifierKey;
 	return [NSString stringWithFormat:@"%04d", (int)_nextMessageIdentifier];
 }
 
-- (void)_handshakeWithSpringBoard {
+- (void)_handshakeWithServer {
 	
 	if (_closedConnection) return;
 	
@@ -187,25 +176,25 @@ static char pendingIncomingMessageIdentifierKey;
 	NSDictionary *dict = @{ @"appIdentifier": identifier };
 	OBJCIPCMessage *message = [OBJCIPCMessage handshakeMessageWithDictionary:dict];
 	
-	IPCLOG(@"<Connection> Send handshake message to SpringBoard <app identifier: %@>", identifier);
+	IPCLOG(@"<Connection> Send handshake message to server <app identifier: %@>", identifier);
 	
 	[self sendMessage:message];
 }
 
-- (void)_handshakeWithSpringBoardComplete:(NSDictionary *)dict {
+- (void)_handshakeWithServerComplete:(NSDictionary *)dict {
 	
 	if (_closedConnection) return;
 	
 	BOOL success = [dict[@"success"] boolValue];
 	if (success) {
 		
-		IPCLOG(@"<Connection> Handshake with SpringBoard succeeded");
+		IPCLOG(@"<Connection> Handshake with server succeeded");
 		
 		// update flag
 		_handshakeFinished = YES;
 		
 		// update app identifier
-		self.appIdentifier = SpringBoardIdentifier;
+		self.appIdentifier = SERVER_ID;
 		[[OBJCIPC sharedInstance] notifyConnectionBecomesActive:self];
 		
 		// dispatch all pending incoming messages to handler
@@ -218,13 +207,10 @@ static char pendingIncomingMessageIdentifierKey;
 			[self _dispatchIncomingMessage:dictionary];
 		}
 		
-		[_pendingIncomingMessages release], _pendingIncomingMessages = nil;
-		
-		// setup auto-disconnect timer
-		[self _createAutoDisconnectTimer];
+		_pendingIncomingMessages = nil;
 		
 	} else {
-		IPCLOG(@"<Connection> Handshake with SpringBoard failed");
+		IPCLOG(@"<Connection> Handshake with server failed");
 		// close connection if the handshake fails
 		[self closeConnection];
 	}
@@ -245,9 +231,6 @@ static char pendingIncomingMessageIdentifierKey;
 	
 	// update flag
 	_handshakeFinished = YES;
-	
-	// make the app stay in background
-	[OBJCIPC setAppWithIdentifier:appIdentifier inBackground:YES];
 	
 	// update app identifier
 	self.appIdentifier = appIdentifier;
@@ -276,95 +259,99 @@ static char pendingIncomingMessageIdentifierKey;
 		IPCLOG(@"<Connection> Input stream has no bytes available");
 		return;
 	}
+    
+    dispatch_async(_incomingDispatchQueue, ^{
 	
-	if (!_receivedHeader) {
-		
-		int headerSize = sizeof(OBJCIPCMessageHeader);
-		NSUInteger readLen = MAX(0, headerSize - _receivedHeaderLength);
-		uint8_t header[readLen];
-		int headerLen = [_inputStream read:header maxLength:readLen];
-		_receivedHeaderLength += headerLen;
+        if (!self->_receivedHeader) {
+            
+            int headerSize = sizeof(OBJCIPCMessageHeader);
+            NSUInteger readLen = MAX(0, headerSize - self->_receivedHeaderLength);
+            uint8_t header[readLen];
+            int headerLen = (int)[self->_inputStream read:header maxLength:readLen];
+            self->_receivedHeaderLength += headerLen;
 
-		// prevent unexpected error when reading from input stream
-		if (headerLen <= 0) {
-			[self closeConnection];
-			return;
-		}
+            // prevent unexpected error when reading from input stream
+            if (headerLen <= 0) {
+                [self closeConnection];
+                return;
+            }
 
-		if (_receivedHeaderData == nil) _receivedHeaderData = [NSMutableData new];
-		[_receivedHeaderData appendBytes:(const void *)header length:headerLen];
-		
-		if (_receivedHeaderLength == headerSize) {
-			
-			// complete header
-			OBJCIPCMessageHeader header;
-			[_receivedHeaderData getBytes:&header length:sizeof(OBJCIPCMessageHeader)];
-			
-			char *magicNumber = header.magicNumber;
-			if (!(magicNumber[0] == 'P' && magicNumber[1] == 'W')) {
-				// unknown message
-				[self closeConnection];
-				return;
-			}
-			
-			// reply flag
-			BOOL isReply = header.replyFlag;
-			
-			// message name
-			NSString *messageName = [[[NSString alloc] initWithCString:header.messageName encoding:NSASCIIStringEncoding] autorelease];
-			
-			// message identifier
-			NSString *messageIdentifier = [[[NSString alloc] initWithCString:header.messageIdentifier encoding:NSASCIIStringEncoding] autorelease];
-			
-			BOOL isHandshake = NO;
-			if ([messageIdentifier isEqualToString:@"00HS"]) { // fixed
-				// this is a handshake message
-				isHandshake = YES;
-			}
-			
-			// message content length
-			int contentLength = header.contentLength;
-			
-			// header
-			_receivedHeader = YES;
-			_receivedHeaderLength = 0;
-			_isHandshake = isHandshake;
-			_isReply = isReply;
-			_messageName = [messageName copy];
-			_messageIdentifier = [messageIdentifier copy];
-			[_receivedHeaderData release], _receivedHeaderData = nil;
-			
-			// content
-			_contentLength = contentLength;
-			_receivedContentLength = 0;
-			_receivedContentData = [NSMutableData new];
-			
-			IPCLOG(@"<Connection> Received message header <reply: %@> <identifier: %@> <message name: %@> <%d bytes>", (isReply ? @"YES" : @"NO"), messageIdentifier, messageName, contentLength);
-			
-		} else {
-			// incomplete header
-			_receivedHeader = NO;
-			return;
-		}
-	}
-	
-	// message content
-	if (_contentLength > 0) {
-		NSUInteger len = MAX(MIN(1024, _contentLength - _receivedContentLength), 0);
-		uint8_t buffer[len];
-		int receivedLen = [_inputStream read:buffer maxLength:len];
-		if (receivedLen > 0) {
-			[_receivedContentData appendBytes:(const void *)buffer length:receivedLen];
-			_receivedContentLength += receivedLen;
-			if (_receivedContentLength == _contentLength) {
-				// finish receiving the message
-				[self _dispatchReceivedMessage];
-			}
-		}
-	} else {
-		// no data to receive because content length is 0 (most likely it is a empty reply)
-		[self _dispatchReceivedMessage];
-	}
+            if (self->_receivedHeaderData == nil) self->_receivedHeaderData = [NSMutableData new];
+            [self->_receivedHeaderData appendBytes:(const void *)header length:headerLen];
+            
+            if (self->_receivedHeaderLength == headerSize) {
+                
+                // complete header
+                OBJCIPCMessageHeader header;
+                [self->_receivedHeaderData getBytes:&header length:sizeof(OBJCIPCMessageHeader)];
+                
+                char *magicNumber = header.magicNumber;
+                if (!(magicNumber[0] == 'P' && magicNumber[1] == 'W')) {
+                    // unknown message
+                    [self closeConnection];
+                    return;
+                }
+                
+                // reply flag
+                BOOL isReply = header.replyFlag;
+                
+                // message name
+                NSString *messageName = [[NSString alloc] initWithCString:header.messageName encoding:NSASCIIStringEncoding];
+                
+                // message identifier
+                NSString *messageIdentifier = [[NSString alloc] initWithCString:header.messageIdentifier encoding:NSASCIIStringEncoding];
+                
+                BOOL isHandshake = NO;
+                if ([messageIdentifier isEqualToString:@"00HS"]) { // fixed
+                    // this is a handshake message
+                    isHandshake = YES;
+                }
+                
+                // message content length
+                int contentLength = header.contentLength;
+                
+                // header
+                self->_receivedHeader = YES;
+                self->_receivedHeaderLength = 0;
+                self->_isHandshake = isHandshake;
+                self->_isReply = isReply;
+                self->_messageName = [messageName copy];
+                self->_messageIdentifier = [messageIdentifier copy];
+                self->_receivedHeaderData = nil;
+                
+                // content
+                self->_contentLength = contentLength;
+                self->_receivedContentLength = 0;
+                self->_receivedContentData = [NSMutableData new];
+                
+                IPCLOG(@"<Connection> Received message header <reply: %@> <identifier: %@> <message name: %@> <%d bytes>", (isReply ? @"YES" : @"NO"), messageIdentifier, messageName, contentLength);
+                
+            } else {
+                // incomplete header
+                self->_receivedHeader = NO;
+                return;
+            }
+        }
+        
+        // message content
+        if (self->_contentLength > 0) {
+            NSUInteger len = MAX(MIN(MAX_CONTENT_LENGTH, self->_contentLength - self->_receivedContentLength), 0);
+            uint8_t buffer[len];
+            int receivedLen = (int)[self->_inputStream read:buffer maxLength:len];
+            if (receivedLen > 0) {
+                [self->_receivedContentData appendBytes:(const void *)buffer length:receivedLen];
+                self->_receivedContentLength += receivedLen;
+                if (self->_receivedContentLength == self->_contentLength) {
+                    // finish receiving the message
+                    [self _dispatchReceivedMessage];
+                }
+            }
+        } else {
+            // no data to receive because content length is 0 (most likely it is a empty reply)
+            [self _dispatchReceivedMessage];
+        }
+        
+    });
 }
 
 - (void)_writeOutgoingMessageData {
@@ -375,7 +362,7 @@ static char pendingIncomingMessageIdentifierKey;
 	
 	if (_outgoingMessageData != nil && length > 0 && [_outputStream hasSpaceAvailable]) {
 		
-		NSUInteger len = MAX(MIN(1024, length), 0);
+		NSUInteger len = MAX(MIN(MAX_CONTENT_LENGTH, length), 0);
 		
 		// copy the message data to buffer
 		uint8_t buf[len];
@@ -397,11 +384,10 @@ static char pendingIncomingMessageIdentifierKey;
 				NSRange range = NSMakeRange(writtenLen, length - writtenLen);
 				NSMutableData *trimmedData = [[_outgoingMessageData subdataWithRange:range] mutableCopy];
 				// update buffered outgoing message data
-				[_outgoingMessageData release];
 				_outgoingMessageData = trimmedData;
 			} else {
 				// finish writing buffer
-				[_outgoingMessageData release], _outgoingMessageData = nil;
+				_outgoingMessageData = nil;
 			}
 		}
 	}
@@ -410,6 +396,12 @@ static char pendingIncomingMessageIdentifierKey;
 - (void)_dispatchReceivedMessage {
 	
 	if (_closedConnection) return;
+    
+    // TODO: THIS IS BAD - ONLY WORKS FOR SERIAL IPC!
+    // CONCURRENT REQUESTS BREAK ENTIRELY!
+    // Need to encapsulate ALL of these properties in a class, and pass that around instead
+    // Need to manage them in a map by message name, so that _readIncomingMessageData is able to
+    // fill up the content data correctly
 	
 	// flags
 	BOOL isHandshake = _isHandshake;
@@ -437,8 +429,6 @@ static char pendingIncomingMessageIdentifierKey;
 	// convert the data back to NSDictionary
 	NSDictionary *dictionary = (NSDictionary *)[NSKeyedUnarchiver unarchiveObjectWithData:data];
 	
-	[self retain]; // to prevent self from being released during callback (e.g. deactivateApp)
-	
 	if (isHandshake) {
 		
 		#if LOG_MESSAGE_BODY
@@ -448,7 +438,7 @@ static char pendingIncomingMessageIdentifierKey;
 		#endif
 		
 		// pass to internal handler
-		if ([OBJCIPC isSpringBoard]) {
+		if ([OBJCIPC isServer]) {
 			NSDictionary *reply = [self _handshakeWithApp:dictionary];
 			if (reply != nil) {
 				// send a handshake completion message to app
@@ -456,7 +446,7 @@ static char pendingIncomingMessageIdentifierKey;
 				[self sendMessage:message];
 			}
 		} else {
-			[self _handshakeWithSpringBoardComplete:dictionary];
+			[self _handshakeWithServerComplete:dictionary];
 		}
 		
 	} else if (isReply) {
@@ -470,12 +460,9 @@ static char pendingIncomingMessageIdentifierKey;
 		// find the message reply handler
 		OBJCIPCReplyHandler handler = _replyHandlers[identifier];
 		if (handler != nil) {
+            handler(dictionary);
 			
 			IPCLOG(@"<Connection> Passed the received dictionary to reply handler");
-			
-			executeOnMainThread(^{
-				handler(dictionary);
-			});
 			
 			// release the reply handler
 			[_replyHandlers removeObjectForKey:identifier];
@@ -506,7 +493,6 @@ static char pendingIncomingMessageIdentifierKey;
 	}
 	
 	[self _resetReceivingMessageState];
-	[self release];
 }
 
 - (void)_dispatchIncomingMessage:(NSDictionary *)dictionary {
@@ -518,24 +504,23 @@ static char pendingIncomingMessageIdentifierKey;
 	NSString *identifier = objc_getAssociatedObject(dictionary, &pendingIncomingMessageIdentifierKey);
 	
 	// the reply dictionary
-	__block NSDictionary *reply = nil;
 	
 	// handler
 	OBJCIPCIncomingMessageHandler handler = [self incomingMessageHandlerForMessageName:name];
 	
 	if (handler != nil) {
 		IPCLOG(@"<Connection> Pass the received dictionary to incoming message handler");
-		executeOnMainThread(^{
-			reply = handler(dictionary);
-		});
+        
+        if (!_closedConnection) {
+            handler(dictionary, ^(NSDictionary *reply) {
+                // send reply as a new message
+                OBJCIPCMessage *message = [OBJCIPCMessage outgoingMessageWithMessageName:name dictionary:reply messageIdentifier:identifier isReply:YES replyHandler:nil];
+                [self sendMessage:message];
+            });
+        }
+
 	} else {
 		IPCLOG(@"<Connection> No incoming message handler found");
-	}
-	
-	if (!_closedConnection) {
-		// send reply as a new message
-		OBJCIPCMessage *message = [OBJCIPCMessage outgoingMessageWithMessageName:name dictionary:reply messageIdentifier:identifier isReply:YES replyHandler:nil];
-		[self sendMessage:message];
 	}
 }
 
@@ -546,58 +531,17 @@ static char pendingIncomingMessageIdentifierKey;
 	_receivedHeaderLength = 0;
 	_isHandshake = NO;
 	_isReply = NO;
-	[_messageName release], _messageName = nil;
-	[_messageIdentifier release], _messageIdentifier = nil;
-	[_receivedHeaderData release], _receivedHeaderData = nil;
+	_messageName = nil;
+    _messageIdentifier = nil;
+	_receivedHeaderData = nil;
 	
 	// content
 	_contentLength = 0;
 	_receivedContentLength = 0;
-	[_receivedContentData release], _receivedContentData = nil;
-}
-
-- (void)_createAutoDisconnectTimer {
-	if (_autoDisconnectTimer == nil) {
-		// ticks every minute
-		_autoDisconnectTimer = [[NSTimer scheduledTimerWithTimeInterval:OBJCIPC_AUTODISCONNECT_TICKTIME target:self selector:@selector(_autoDisconnectTimerTicks) userInfo:nil repeats:YES] retain];
-	}
-}
-
-- (void)_autoDisconnectTimerTicks {
-	@synchronized(self) {
-		_autoDisconnectTimerTicks++;
-		IPCLOG(@"<Connection> Auto disconnect timer ticks (%d)", (int)_autoDisconnectTimerTicks);
-		if (_autoDisconnectTimerTicks == OBJCIPC_AUTODISCONNECT_TICKS) {
-			[self _triggerAutoDisconnect];
-		}
-	}
-}
-
-- (void)_resetAutoDisconnectTimer {
-	IPCLOG(@"<Connection> Reset auto disconnect timer");
-	@synchronized(self) {
-		_autoDisconnectTimerTicks = 0;
-	}
-}
-
-- (void)_triggerAutoDisconnect {
-	IPCLOG(@"<Connection> Trigger auto disconnect");
-	[OBJCIPC deactivate];
-}
-
-- (void)_invalidateAutoDisconnectTimer {
-	if (_autoDisconnectTimer != nil) {
-		[_autoDisconnectTimer invalidate];
-		[_autoDisconnectTimer release];
-		_autoDisconnectTimer = nil;
-		IPCLOG(@"<Connection> Auto disconnect timer is invalidated");
-	}
+	_receivedContentData = nil;
 }
 
 - (void)stream:(NSStream *)stream handleEvent:(NSStreamEvent)event {
-	
-	// reset auto disconnect timer whenever there's a socket event
-	[self _resetAutoDisconnectTimer];
 	
 	switch(event) {
 			
@@ -635,19 +579,6 @@ static char pendingIncomingMessageIdentifierKey;
 
 - (NSString *)description {
 	return [NSString stringWithFormat:@"<%@ %p> <App identifier: %@> <Reply handlers: %d>", [self class], self, _appIdentifier, (int)[_replyHandlers count]];
-}
-
-- (void)dealloc {
-	
-	// just in case the connection is not closed yet
-	// normally, a connection instance gets released only when its connection was closed
-	[self closeConnection];
-	
-	// this is for OBJCIPC to identify this connection
-	// so release it only when the connection gets released
-	[_appIdentifier release], _appIdentifier = nil;
-	
-	[super dealloc];
 }
 
 @end

@@ -12,11 +12,11 @@
 	
 	BOOL _activated;
 	
-	// SpringBoard server port
+	// Server port
 	NSUInteger _serverPort;
 	
-	// process assertions
-	NSMutableDictionary *_processAssertions;
+    dispatch_queue_t _incomingDispatchQueue;
+    dispatch_queue_t _outgoingDispatchQueue;
 	
 	// store active connections (each contains its own streams)
 	NSMutableSet *_pendingConnections;
@@ -38,8 +38,7 @@
 @property(nonatomic, retain) NSMutableDictionary *outgoingMessageQueue;
 
 // process checking methods
-+ (BOOL)isSpringBoard;
-+ (BOOL)isBackBoard;
++ (BOOL)isServer;
 + (BOOL)isApp;
 
 // retrieve the shared instance
@@ -49,51 +48,34 @@
 + (void)activate;
 + (void)deactivate;
 
-// or manually close the connection between an app and SpringBoard
-+ (void)deactivateAppWithIdentifier:(NSString *)identifier;
-
-// launch app in background (called in SpringBoard)
-+ (BOOL)launchAppWithIdentifier:(NSString *)identifier stayInBackground:(BOOL)stayInBackground;
-+ (BOOL)setAppWithIdentifier:(NSString *)identifier inBackground:(BOOL)inBackground;
-
 /*** Asynchronous message delivery ***/
 
-// SpringBoard* -----> App
+// Server* -----> App
 + (BOOL)sendMessageToAppWithIdentifier:(NSString *)identifier messageName:(NSString *)messageName dictionary:(NSDictionary *)dictionary replyHandler:(OBJCIPCReplyHandler)handler;
++ (void)broadcastMessageToAppsWithMessageName:(NSString *)messageName dictionary:(NSDictionary *)dictionary replyHandler:(OBJCIPCReplyHandler)handler;
 
-// App* -----> SpringBoard
-+ (BOOL)sendMessageToSpringBoardWithMessageName:(NSString *)messageName dictionary:(NSDictionary *)dictionary replyHandler:(OBJCIPCReplyHandler)handler;
-
-/*** Synchronous message delivery ***/
-
-// SpringBoard* -----> App
-+ (NSDictionary *)sendMessageToAppWithIdentifier:(NSString *)identifier messageName:(NSString *)messageName dictionary:(NSDictionary *)dictionary;
-
-// App* -----> SpringBoard
-+ (NSDictionary *)sendMessageToSpringBoardWithMessageName:(NSString *)messageName dictionary:(NSDictionary *)dictionary;
+// App* -----> Server
++ (BOOL)sendMessageToServerWithMessageName:(NSString *)messageName dictionary:(NSDictionary *)dictionary replyHandler:(OBJCIPCReplyHandler)handler;
 
 /*** Register incoming message handler ***/
 
-// App -----> SpringBoard*
+// App -----> Server*
 + (void)registerIncomingMessageFromAppHandlerForMessageName:(NSString *)messageName handler:(OBJCIPCIncomingMessageHandler)handler;
 + (void)unregisterIncomingMessageFromAppHandlerForMessageName:(NSString *)messageName;
 
 + (void)unregisterIncomingMessageHandlerForAppWithIdentifier:(NSString *)identifier andMessageName:(NSString *)messageName;
 + (void)registerIncomingMessageHandlerForAppWithIdentifier:(NSString *)identifier andMessageName:(NSString *)messageName handler:(OBJCIPCIncomingMessageHandler)handler;
-+ (void)unregisterIncomingMessageHandlerForAppWithIdentifier:(NSString *)identifier andMessageName:(NSString *)messageName;
 
-// SpringBoard -----> App*
-+ (void)registerIncomingMessageFromSpringBoardHandlerForMessageName:(NSString *)messageName handler:(OBJCIPCIncomingMessageHandler)handler;
-+ (void)unregisterIncomingMessageFromSpringBoardHandlerForMessageName:(NSString *)messageName;
+// Server -----> App*
++ (void)registerIncomingMessageFromServerHandlerForMessageName:(NSString *)messageName handler:(OBJCIPCIncomingMessageHandler)handler;
++ (void)unregisterIncomingMessageFromServerHandlerForMessageName:(NSString *)messageName;
 
 /*** For testing purpose ***/
 
 + (void)registerTestIncomingMessageHandlerForAppWithIdentifier:(NSString *)identifier;
-+ (void)registerTestIncomingMessageHandlerForSpringBoard;
++ (void)registerTestIncomingMessageHandlerForServer;
 + (void)sendAsynchronousTestMessageToAppWithIdentifier:(NSString *)identifier;
-+ (void)sendAsynchronousTestMessageToSpringBoard;
-+ (NSDictionary *)sendSynchronousTestMessageToAppWithIdentifier:(NSString *)identifier;
-+ (NSDictionary *)sendSynchronousTestMessageToSpringBoard;
++ (void)sendAsynchronousTestMessageToServer;
 
 // manage connections
 - (OBJCIPCConnection *)activeConnectionWithAppWithIdentifier:(NSString *)identifier;
@@ -108,15 +90,6 @@
 // private methods to setup socket server and connection
 - (NSUInteger)_createSocketServer;
 - (void)_createPairWithAppSocket:(CFSocketNativeHandle)handle;
-- (void)_connectToSpringBoard;
-
-// private methods to handle app activation and deactivation
-+ (void)_setupAppActivationListener;
-+ (void)_setupAppDeactivationListener;
-+ (void)_sendActivationNotificationToAppWithIdentifier:(NSString *)identifier;
-+ (void)_sendDeactivationNotificationToAppWithIdentifier:(NSString *)identifier;
-+ (void)_appActivationHandler;
-+ (void)_appDeactivationHandler;
-- (void)_deactivateApp;
+- (void)_connectToServer;
 
 @end

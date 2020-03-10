@@ -7,15 +7,14 @@
 	#define IPCLOG(x,...) [NSString stringWithFormat:(x), ##__VA_ARGS__]
 #endif
 
-#define PrefPath @"/var/mobile/Library/Preferences/libobjcipc.plist"
-#define XPCObjects "/System/Library/PrivateFrameworks/XPCObjects.framework/XPCObjects"
-#define SpringBoardIdentifier @"com.apple.springboard"
-#define OBJCIPCActivateAppNotification @"OBJCIPCActivateAppNotification"
-#define OBJCIPCDeactivateAppNotification @"OBJCIPCDeactivateAppNotification"
+#define SETTINGS_NOTIFICATION CFSTR("com.matchstic.libwidgetinfo/update")
+#define SERVER_ID @"com.matchstic.libwidgetinfo"
+
+#import <Foundation/Foundation.h>
 
 @class OBJCIPC, OBJCIPCConnection, OBJCIPCMessage;
 
-typedef NSDictionary *(^OBJCIPCIncomingMessageHandler)(NSDictionary *); // return NSDictionary or nil to reply
+typedef void(^OBJCIPCIncomingMessageHandler)(NSDictionary *data, void (^callback)(NSDictionary* response)); // return NSDictionary or nil to reply
 typedef void(^OBJCIPCReplyHandler)(NSDictionary *);
 
 typedef struct {

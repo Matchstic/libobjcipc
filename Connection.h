@@ -9,15 +9,13 @@
 #import "header.h"
 
 @interface OBJCIPCConnection : NSObject<NSStreamDelegate> {
-	
+    dispatch_queue_t _incomingDispatchQueue;
+    dispatch_queue_t _outgoingDispatchQueue;
+    
 	BOOL _closedConnection;
 	BOOL _handshakeFinished;
 	NSString *_appIdentifier;
 	NSUInteger _nextMessageIdentifier;
-	
-	// auto disconnect
-	NSUInteger _autoDisconnectTimerTicks;
-	NSTimer *_autoDisconnectTimer;
 	
 	// socket streams
 	NSInputStream *_inputStream;
@@ -52,7 +50,10 @@
 @property(nonatomic, readonly) NSMutableDictionary *incomingMessageHandlers;
 @property(nonatomic, retain) NSMutableDictionary *replyHandlers;
 
-- (instancetype)initWithInputStream:(NSInputStream *)inputStream outputStream:(NSOutputStream *)outputStream;
+- (instancetype)initWithInputStream:(NSInputStream *)inputStream
+                       outputStream:(NSOutputStream *)outputStream
+              incomingDispatchQueue:(dispatch_queue_t)incomingQueue
+              outgoingDispatchQueue:(dispatch_queue_t)outgoingQueue;
 
 - (void)sendMessage:(OBJCIPCMessage *)message;
 - (void)closeConnection;
@@ -60,9 +61,9 @@
 - (OBJCIPCIncomingMessageHandler)incomingMessageHandlerForMessageName:(NSString *)messageName;
 - (NSString *)nextMessageIdentifier;
 
-// handshake with app and SpringBoard
-- (void)_handshakeWithSpringBoard;
-- (void)_handshakeWithSpringBoardComplete:(NSDictionary *)dict;
+// handshake with app and server
+- (void)_handshakeWithServer;
+- (void)_handshakeWithServerComplete:(NSDictionary *)dict;
 - (NSDictionary *)_handshakeWithApp:(NSDictionary *)dict;
 
 // message data transmission
@@ -71,11 +72,5 @@
 - (void)_dispatchReceivedMessage;
 - (void)_dispatchIncomingMessage:(NSDictionary *)dictionary;
 - (void)_resetReceivingMessageState;
-
-// auto disconnect
-- (void)_createAutoDisconnectTimer;
-- (void)_resetAutoDisconnectTimer;
-- (void)_triggerAutoDisconnect;
-- (void)_invalidateAutoDisconnectTimer;
 
 @end
