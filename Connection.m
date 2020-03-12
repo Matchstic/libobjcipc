@@ -396,12 +396,6 @@ static char pendingIncomingMessageIdentifierKey;
 - (void)_dispatchReceivedMessage {
 	
 	if (_closedConnection) return;
-    
-    // TODO: THIS IS BAD - ONLY WORKS FOR SERIAL IPC!
-    // CONCURRENT REQUESTS BREAK ENTIRELY!
-    // Need to encapsulate ALL of these properties in a class, and pass that around instead
-    // Need to manage them in a map by message name, so that _readIncomingMessageData is able to
-    // fill up the content data correctly
 	
 	// flags
 	BOOL isHandshake = _isHandshake;

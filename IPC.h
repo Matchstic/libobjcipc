@@ -29,7 +29,9 @@
 }
 
 @property(nonatomic) BOOL activated;
+@property(nonatomic) BOOL activatedForReconnection;
 @property(nonatomic) NSUInteger serverPort;
+@property(nonatomic, copy) void (^reconnectionHandler)(void); 
 @property(nonatomic, retain) NSMutableDictionary *processAssertions;
 @property(nonatomic, retain) NSMutableSet *pendingConnections;
 @property(nonatomic, retain) NSMutableDictionary *activeConnections;
@@ -47,6 +49,10 @@
 // these two methods will be called automatically when needed
 + (void)activate;
 + (void)deactivate;
+
+// Call to pause/restart server connectivity
++ (void)pauseServer;
++ (void)restartServer;
 
 /*** Asynchronous message delivery ***/
 
