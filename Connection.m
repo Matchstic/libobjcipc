@@ -360,9 +360,10 @@ static char pendingIncomingMessageIdentifierKey;
 	
 	NSUInteger length = [_outgoingMessageData length];
 	
-	if (_outgoingMessageData != nil && length > 0 && [_outputStream hasSpaceAvailable]) {
+	if (_outgoingMessageData != nil && _outgoingMessageData.bytes != nil && length > 0 && [_outputStream hasSpaceAvailable]) {
 		
 		NSUInteger len = MAX(MIN(MAX_CONTENT_LENGTH, length), 0);
+        if (len == 0) return;
 		
 		// copy the message data to buffer
 		uint8_t buf[len];
@@ -471,8 +472,10 @@ static char pendingIncomingMessageIdentifierKey;
 		#endif
 		
 		// set associated object (message name and identifier)
-		objc_setAssociatedObject(dictionary, &pendingIncomingMessageNameKey, name, OBJC_ASSOCIATION_COPY_NONATOMIC);
-		objc_setAssociatedObject(dictionary, &pendingIncomingMessageIdentifierKey, identifier, OBJC_ASSOCIATION_COPY_NONATOMIC);
+        if (dictionary) {
+            objc_setAssociatedObject(dictionary, &pendingIncomingMessageNameKey, name, OBJC_ASSOCIATION_COPY_NONATOMIC);
+            objc_setAssociatedObject(dictionary, &pendingIncomingMessageIdentifierKey, identifier, OBJC_ASSOCIATION_COPY_NONATOMIC);
+        }
 		
 		if (!_handshakeFinished) {
 			// put the incoming message into pending incoming message list
