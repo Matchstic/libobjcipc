@@ -11,7 +11,7 @@
 #import "IPC.h"
 #import "Message.h"
 
-#define MAX_CONTENT_LENGTH 65536
+#define MAX_CONTENT_LENGTH 1024
 
 static char pendingIncomingMessageNameKey;
 static char pendingIncomingMessageIdentifierKey;
@@ -103,7 +103,7 @@ static char pendingIncomingMessageIdentifierKey;
 	
 	// remove streams from run loop
 	[_inputStream removeFromRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
-	[_inputStream removeFromRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
+	[_outputStream removeFromRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
 	
 	// close streams
 	[_inputStream close];
