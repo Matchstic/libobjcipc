@@ -207,7 +207,10 @@ static inline void preferencesChangedCallback(CFNotificationCenterRef center, vo
 	}
 	
 	// release all pending and active connections
+    [ipc.pendingConnections removeAllObjects];
 	ipc.pendingConnections = nil;
+    
+    [ipc.activeConnections removeAllObjects];
 	ipc.activeConnections = nil;
 	
 	// reset all other instance variables
@@ -445,10 +448,7 @@ static inline void preferencesChangedCallback(CFNotificationCenterRef center, vo
 - (instancetype)init {
     self = [super init];
     
-    if (self) {
-        _incomingDispatchQueue = dispatch_queue_create("com.matchstic.libwidgetinfo.incoming", NULL);
-        _outgoingDispatchQueue = dispatch_queue_create("com.matchstic.libwidgetinfo.outgoing", NULL);
-        
+    if (self) {        
         // Setup UIKit listeners
         if ([OBJCIPC isApp]) {
             [[NSNotificationCenter defaultCenter] addObserver:self
@@ -680,9 +680,7 @@ static inline void preferencesChangedCallback(CFNotificationCenterRef center, vo
 	
 	// create a new connection instance with the connected socket streams
 	OBJCIPCConnection *connection = [[OBJCIPCConnection alloc] initWithInputStream:inputStream
-                                                                      outputStream:outputStream
-                                                             incomingDispatchQueue:_incomingDispatchQueue
-                                                             outgoingDispatchQueue:_outgoingDispatchQueue];
+                                                                      outputStream:outputStream];
 	
 	// it will become active after handshake with server
 	[self addPendingConnection:connection];
@@ -709,9 +707,7 @@ static inline void preferencesChangedCallback(CFNotificationCenterRef center, vo
 	
 	// create a new connection
 	OBJCIPCConnection *connection = [[OBJCIPCConnection alloc] initWithInputStream:inputStream
-                                                                      outputStream:outputStream
-                                                             incomingDispatchQueue:_incomingDispatchQueue
-                                                             outgoingDispatchQueue:_outgoingDispatchQueue];
+                                                                      outputStream:outputStream];
 	connection.appIdentifier = SERVER_ID;
 	
 	// it will become active after handshake with server

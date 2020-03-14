@@ -19,9 +19,7 @@ static char pendingIncomingMessageIdentifierKey;
 @implementation OBJCIPCConnection
 
 - (instancetype)initWithInputStream:(NSInputStream *)inputStream
-                       outputStream:(NSOutputStream *)outputStream
-              incomingDispatchQueue:(dispatch_queue_t)incomingQueue
-              outgoingDispatchQueue:(dispatch_queue_t)outgoingQueue {
+                       outputStream:(NSOutputStream *)outputStream {
 	
 	if ((self = [super init])) {
 		
@@ -40,8 +38,6 @@ static char pendingIncomingMessageIdentifierKey;
 		// keep references
 		_inputStream = inputStream;
 		_outputStream = outputStream;
-        _incomingDispatchQueue = incomingQueue;
-        _outgoingDispatchQueue = outgoingQueue;
 	}
 	
 	return self;
@@ -51,33 +47,34 @@ static char pendingIncomingMessageIdentifierKey;
 	
 	if (_closedConnection) return;
 	
-    dispatch_async(_outgoingDispatchQueue, ^{
-        // auto assign the next message identifier
-        if (message.messageIdentifier == nil) {
-            message.messageIdentifier = [self nextMessageIdentifier];
-        }
-        
-        #if LOG_MESSAGE_BODY
-            IPCLOG(@"<Connection> Send message to app with identifier <%@>", self.appIdentifier);
-        #else
-            IPCLOG(@"<Connection> Send message to app with identifier <%@> <message: %@>", self.appIdentifier, message);
-        #endif
-        
-        OBJCIPCReplyHandler replyHandler = message.replyHandler;
-        NSString *messageIdentifier = message.messageIdentifier;
-        NSData *data = [message messageData];
-        
-        if (data == nil) {
-            IPCLOG(@"<Connection> Unable to retrieve the message data");
-            return;
-        }
-        
-        // set reply handler
-        if (replyHandler != nil) {
-            if (self->_replyHandlers == nil) self->_replyHandlers = [NSMutableDictionary new];
-            self->_replyHandlers[messageIdentifier] = replyHandler;
-        }
-        
+    // auto assign the next message identifier
+    if (message.messageIdentifier == nil) {
+        message.messageIdentifier = [self nextMessageIdentifier];
+    }
+    
+    #if LOG_MESSAGE_BODY
+        IPCLOG(@"<Connection> Send message to app with identifier <%@>", self.appIdentifier);
+    #else
+        IPCLOG(@"<Connection> Send message to app with identifier <%@> <message: %@>", self.appIdentifier, message);
+    #endif
+    
+    OBJCIPCReplyHandler replyHandler = message.replyHandler;
+    NSString *messageIdentifier = message.messageIdentifier;
+    NSData *data = [message messageData];
+    
+    if (data == nil) {
+        IPCLOG(@"<Connection> Unable to retrieve the message data");
+        return;
+    }
+    
+    // set reply handler
+    if (replyHandler != nil) {
+        if (self->_replyHandlers == nil) self->_replyHandlers = [NSMutableDictionary new];
+        self->_replyHandlers[messageIdentifier] = replyHandler;
+    }
+    
+    // Assure concurrency is sane
+    dispatch_async(dispatch_get_main_queue(), ^{
         // append outgoing message data
         if (self->_outgoingMessageData == nil) self->_outgoingMessageData = [NSMutableData new];
         [self->_outgoingMessageData appendData:data];
@@ -89,47 +86,40 @@ static char pendingIncomingMessageIdentifierKey;
 
 - (void)closeConnection {
 	
-	if (_closedConnection) return;
-	_closedConnection = YES;
-	
-	IPCLOG(@"<Connection> Close connection <%@>", self);
-	
-	// reset all receiving message state
-	[self _resetReceivingMessageState];
-	
-	// clear delegate
-	_inputStream.delegate = nil;
-	_outputStream.delegate = nil;
-	
-	// remove streams from run loop
-	[_inputStream removeFromRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
-	[_outputStream removeFromRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
-	
-	// close streams
-	[_inputStream close];
-	[_outputStream close];
-	
-	// release streams
-	_inputStream = nil;
-	_outputStream = nil;
-	
-	// reply nil messages to all reply listener
-	if (_replyHandlers != nil && [_replyHandlers count] > 0) {
-		for (NSString *key in _replyHandlers) {
-			OBJCIPCReplyHandler handler = _replyHandlers[key];
-			if (handler != nil) {
-                handler(nil);
-			}
-		}
-	}
-	
-	_replyHandlers = nil;
-	_outgoingMessageData = nil;
-	_incomingMessageHandlers = nil;
-	_pendingIncomingMessages = nil;
-	
-	// notify the main instance
-	[[OBJCIPC sharedInstance] notifyConnectionIsClosed:self];
+    if (_closedConnection) return;
+    
+    // Dispatch on the queue to ensure concurrency
+    dispatch_async(dispatch_get_main_queue(), ^{
+        IPCLOG(@"<Connection> Close connection <%@>", self);
+        _closedConnection = YES;
+        
+        // reset all receiving message state
+        [self _resetReceivingMessageState];
+        
+        // remove streams from run loop
+        [_inputStream removeFromRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
+        [_outputStream removeFromRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
+        
+        // close streams
+        [_inputStream close];
+        [_outputStream close];
+
+        // Clear outgoing data queue
+        _outgoingMessageData = nil;
+        
+        // reply nil messages to all reply listener
+        if (_replyHandlers != nil && [_replyHandlers count] > 0) {
+            for (NSString *key in _replyHandlers) {
+                OBJCIPCReplyHandler handler = _replyHandlers[key];
+                if (handler != nil) {
+                    handler(nil);
+                }
+            }
+        }
+        
+        // notify the main instance
+        [[OBJCIPC sharedInstance] notifyConnectionIsClosed:self];
+    });
 }
 
 - (void)setIncomingMessageHandler:(OBJCIPCIncomingMessageHandler)handler forMessageName:(NSString *)messageName {
@@ -260,7 +250,7 @@ static char pendingIncomingMessageIdentifierKey;
 		return;
 	}
     
-    dispatch_async(_incomingDispatchQueue, ^{
+    dispatch_async(dispatch_get_main_queue(), ^{
 	
         if (!self->_receivedHeader) {
             
@@ -350,48 +340,48 @@ static char pendingIncomingMessageIdentifierKey;
             // no data to receive because content length is 0 (most likely it is a empty reply)
             [self _dispatchReceivedMessage];
         }
-        
     });
 }
 
 - (void)_writeOutgoingMessageData {
 	
 	if (_closedConnection) return;
-	
-	NSUInteger length = [_outgoingMessageData length];
-	
-	if (_outgoingMessageData != nil && _outgoingMessageData.bytes != nil && length > 0 && [_outputStream hasSpaceAvailable]) {
-		
-		NSUInteger len = MAX(MIN(MAX_CONTENT_LENGTH, length), 0);
-        if (len == 0) return;
-		
-		// copy the message data to buffer
-		uint8_t buf[len];
-		memcpy(buf, _outgoingMessageData.bytes, len);
-		
-		// write to output stream
-		NSInteger writtenLen = [_outputStream write:(const uint8_t *)buf maxLength:len];
-		
-		// error occurs
-		if (writtenLen == -1) {
-			// close connection
-			[self closeConnection];
-			return;
-		}
-		
-		if (writtenLen > 0) {
-			if ((length - writtenLen) > 0) {
-				// trim the data
-				NSRange range = NSMakeRange(writtenLen, length - writtenLen);
-				NSMutableData *trimmedData = [[_outgoingMessageData subdataWithRange:range] mutableCopy];
-				// update buffered outgoing message data
-				_outgoingMessageData = trimmedData;
-			} else {
-				// finish writing buffer
-				_outgoingMessageData = nil;
-			}
-		}
-	}
+    
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSUInteger length = [_outgoingMessageData length];
+        
+        if (_outgoingMessageData != nil && _outgoingMessageData.bytes != nil && length > 0 && [_outputStream hasSpaceAvailable]) {
+            
+            NSUInteger len = MAX(MIN(MAX_CONTENT_LENGTH, length), 0);
+            
+            // copy the message data to buffer
+            uint8_t buf[len];
+            memcpy(buf, _outgoingMessageData.bytes, len);
+            
+            // write to output stream
+            NSInteger writtenLen = [_outputStream write:(const uint8_t *)buf maxLength:len];
+            
+            // error occurs
+            if (writtenLen == -1) {
+                // close connection
+                [self closeConnection];
+                return;
+            }
+            
+            if (writtenLen > 0) {
+                if ((length - writtenLen) > 0) {
+                    // trim the data
+                    NSRange range = NSMakeRange(writtenLen, length - writtenLen);
+                    NSMutableData *trimmedData = [[_outgoingMessageData subdataWithRange:range] mutableCopy];
+                    // update buffered outgoing message data
+                    _outgoingMessageData = trimmedData;
+                } else {
+                    // finish writing buffer
+                    _outgoingMessageData = nil;
+                }
+            }
+        }
+    });
 }
 
 - (void)_dispatchReceivedMessage {

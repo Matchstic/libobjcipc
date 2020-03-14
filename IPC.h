@@ -15,9 +15,6 @@
 	// Server port
 	NSUInteger _serverPort;
 	
-    dispatch_queue_t _incomingDispatchQueue;
-    dispatch_queue_t _outgoingDispatchQueue;
-	
 	// store active connections (each contains its own streams)
 	NSMutableSet *_pendingConnections;
 	NSMutableDictionary *_activeConnections;

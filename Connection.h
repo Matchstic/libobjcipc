@@ -9,8 +9,7 @@
 #import "header.h"
 
 @interface OBJCIPCConnection : NSObject<NSStreamDelegate> {
-    dispatch_queue_t _incomingDispatchQueue;
-    dispatch_queue_t _outgoingDispatchQueue;
+    dispatch_queue_t _dispatchQueue;
     
 	BOOL _closedConnection;
 	BOOL _handshakeFinished;
@@ -51,9 +50,7 @@
 @property(nonatomic, retain) NSMutableDictionary *replyHandlers;
 
 - (instancetype)initWithInputStream:(NSInputStream *)inputStream
-                       outputStream:(NSOutputStream *)outputStream
-              incomingDispatchQueue:(dispatch_queue_t)incomingQueue
-              outgoingDispatchQueue:(dispatch_queue_t)outgoingQueue;
+                       outputStream:(NSOutputStream *)outputStream;
 
 - (void)sendMessage:(OBJCIPCMessage *)message;
 - (void)closeConnection;
