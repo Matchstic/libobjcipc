@@ -75,6 +75,8 @@ static char pendingIncomingMessageIdentifierKey;
     
     // Assure concurrency is sane
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (_closedConnection) return;
+        
         // append outgoing message data
         if (self->_outgoingMessageData == nil) self->_outgoingMessageData = [NSMutableData new];
         [self->_outgoingMessageData appendData:data];
@@ -258,15 +260,14 @@ static char pendingIncomingMessageIdentifierKey;
  *  message data
  */
 - (void)_readIncomingMessageData {
-	
-	if (_closedConnection) return;
-	
-	if (![_inputStream hasBytesAvailable]) {
-		IPCLOG(@"<Connection> Input stream has no bytes available");
-		return;
-	}
     
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (_closedConnection) return;
+        
+        if (![_inputStream hasBytesAvailable]) {
+            IPCLOG(@"<Connection> Input stream has no bytes available");
+            return;
+        }
 	
         if (!self->_receivedHeader) {
             
@@ -360,10 +361,9 @@ static char pendingIncomingMessageIdentifierKey;
 }
 
 - (void)_writeOutgoingMessageData {
-	
-	if (_closedConnection) return;
-    
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (_closedConnection) return;
+        
         NSUInteger length = [_outgoingMessageData length];
         
         if (_outgoingMessageData != nil && _outgoingMessageData.bytes != nil && length > 0 && [_outputStream hasSpaceAvailable]) {
