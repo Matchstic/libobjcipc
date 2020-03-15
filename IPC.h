@@ -47,10 +47,6 @@
 + (void)activate;
 + (void)deactivate;
 
-// Call to pause/restart server connectivity
-+ (void)pauseServer;
-+ (void)restartServer;
-
 /*** Asynchronous message delivery ***/
 
 // Server* -----> App

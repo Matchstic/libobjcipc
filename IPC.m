@@ -17,7 +17,6 @@
 #include "kern_memorystatus.h"
 
 #define SERVER_PORT_KEY @"serverPort"
-#define SERVER_PAUSED_KEY @"serverPaused"
 
 /*
  Note: CFPreferences is used to synchronise state between server and clients when they are not connected
@@ -57,37 +56,16 @@ static inline void preferencesChangedCallback(CFNotificationCenterRef center, vo
     }
     
     NSNumber *port = settings[SERVER_PORT_KEY];
-    NSNumber *paused = settings[SERVER_PAUSED_KEY];
     
     if (lastKnownServerPort != [port unsignedIntValue]) {
-        IPCLOG(@"Server port has changed, reconnecting...");
+        IPCLOG(@"Server port has changed, reconnecting if required...");
         
         OBJCIPC *ipc = [OBJCIPC sharedInstance];
-        ipc.activatedForReconnection = YES;
-        
-        // Reconnect to the new server port
-        [OBJCIPC deactivate];
-        [OBJCIPC activate];
-    }
-    
-    if (lastKnownServerPauseState != [paused boolValue]) {
-        // Pause state changed
-        
-        IPCLOG(@"Server pause state changed: %d", [paused boolValue]);
-        
-        if ([paused boolValue]) {
-            // Paused server, disconnect
+        if (ipc.activated) {
+            // Reconnect to the new server port
             [OBJCIPC deactivate];
-        } else {
-            // Restarted server, connect again
-            
-            OBJCIPC *ipc = [OBJCIPC sharedInstance];
-            ipc.activatedForReconnection = YES;
-            
             [OBJCIPC activate];
         }
-        
-        lastKnownServerPauseState = [paused boolValue];
     }
 }
 
@@ -222,36 +200,6 @@ static inline void preferencesChangedCallback(CFNotificationCenterRef center, vo
 	ipc.activated = NO;
 }
 
-+ (void)pauseServer {
-    if ([self isApp]) {
-        IPCLOG(@"Only server can call this");
-        return;
-    }
-    
-    [self _sendServerIsPaused:YES];
-}
-
-+ (void)restartServer {
-    if ([self isApp]) {
-        IPCLOG(@"Only server can call this");
-        return;
-    }
-    
-    [self _sendServerIsPaused:NO];
-}
-
-+ (void)_sendServerIsPaused:(BOOL)isPaused {
-    IPCLOG(@"<IPC> Set server pause state: %d", isPaused);
-    
-    // Write to CFPreferences
-    CFPreferencesSetValue ((__bridge CFStringRef)SERVER_PAUSED_KEY, (__bridge CFPropertyListRef)@(isPaused), (__bridge CFStringRef)SERVER_ID, kCFPreferencesCurrentUser, kCFPreferencesCurrentHost);
-    
-    CFPreferencesAppSynchronize((__bridge CFStringRef)SERVER_ID);
-    
-    // Post notification of thing has changed
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), SETTINGS_NOTIFICATION, NULL, NULL, YES);
-}
-
 + (void)broadcastMessageToAppsWithMessageName:(NSString *)messageName dictionary:(NSDictionary *)dictionary replyHandler:(OBJCIPCReplyHandler)handler {
     OBJCIPC *ipc = [self sharedInstance];
     
@@ -280,6 +228,12 @@ static inline void preferencesChangedCallback(CFNotificationCenterRef center, vo
 		IPCLOG(@"Message name cannot be nil");
 		return NO;
 	}
+    
+    if ([self isApp]) {
+        // activate OBJCIPC in app
+        // This is since connections can timeout when idle
+        [self activate];
+    }
 	
 	IPCLOG(@"Ready to send message to app with identifier <%@> <message name: %@> <dictionary: %@>", identifier, messageName, dictionary);
 	

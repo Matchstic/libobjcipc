@@ -19,6 +19,10 @@
 	// socket streams
 	NSInputStream *_inputStream;
 	NSOutputStream *_outputStream;
+    
+    // auto disconnect
+    NSUInteger _autoDisconnectTimerTicks;
+    NSTimer *_autoDisconnectTimer;
 	
 	// header
 	BOOL _receivedHeader;

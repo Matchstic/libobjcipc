@@ -11,6 +11,12 @@
 #import "IPC.h"
 #import "Message.h"
 
+// ticks every 10 seconds; then auto disconnect after 6 ticks (1 minute)
+// ticks could be reset when there is any activity in socket connection
+// (e.g. receive new messages, either end closes connection)
+#define OBJCIPC_AUTODISCONNECT_TICKTIME 10.0
+#define OBJCIPC_AUTODISCONNECT_TICKS 6
+
 #define MAX_CONTENT_LENGTH 1024
 
 static char pendingIncomingMessageNameKey;
@@ -97,6 +103,9 @@ static char pendingIncomingMessageIdentifierKey;
         
         // reset all receiving message state
         [self _resetReceivingMessageState];
+        
+        // invalidate the timer
+        [self _invalidateAutoDisconnectTimer];
         
         // remove streams from run loop
         [_inputStream removeFromRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
@@ -216,6 +225,9 @@ static char pendingIncomingMessageIdentifierKey;
 		}
 		
 		_pendingIncomingMessages = nil;
+        
+        // setup auto-disconnect timer
+        [self _createAutoDisconnectTimer];
 		
 	} else {
 		IPCLOG(@"<Connection> Handshake with server failed");
@@ -545,6 +557,9 @@ static char pendingIncomingMessageIdentifierKey;
 }
 
 - (void)stream:(NSStream *)stream handleEvent:(NSStreamEvent)event {
+    
+    // reset auto disconnect timer whenever there's a socket event
+    [self _resetAutoDisconnectTimer];
 	
 	switch(event) {
 			
@@ -578,6 +593,44 @@ static char pendingIncomingMessageIdentifierKey;
 			[self closeConnection];
 			break;
 	}
+}
+
+
+- (void)_createAutoDisconnectTimer {
+    if (_autoDisconnectTimer == nil) {
+        // ticks every minute
+        _autoDisconnectTimer = [[NSTimer scheduledTimerWithTimeInterval:OBJCIPC_AUTODISCONNECT_TICKTIME target:self selector:@selector(_autoDisconnectTimerTicks) userInfo:nil repeats:YES] retain];
+    }
+}
+
+- (void)_autoDisconnectTimerTicks {
+    @synchronized(self) {
+        _autoDisconnectTimerTicks++;
+        IPCLOG(@"<Connection> Auto disconnect timer ticks (%d)", (int)_autoDisconnectTimerTicks);
+        if (_autoDisconnectTimerTicks == OBJCIPC_AUTODISCONNECT_TICKS) {
+            [self _triggerAutoDisconnect];
+        }
+    }
+}
+
+- (void)_resetAutoDisconnectTimer {
+    IPCLOG(@"<Connection> Reset auto disconnect timer");
+    @synchronized(self) {
+        _autoDisconnectTimerTicks = 0;
+    }
+}
+
+- (void)_triggerAutoDisconnect {
+    IPCLOG(@"<Connection> Trigger auto disconnect");
+    [OBJCIPC deactivate];
+}
+
+- (void)_invalidateAutoDisconnectTimer {
+    if (_autoDisconnectTimer != nil) {
+        [_autoDisconnectTimer invalidate];
+        _autoDisconnectTimer = nil;
+        IPCLOG(@"<Connection> Auto disconnect timer is invalidated");
+    }
 }
 
 - (NSString *)description {
