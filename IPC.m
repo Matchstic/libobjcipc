@@ -14,6 +14,7 @@
 #import "IPC.h"
 #import "Connection.h"
 #import "Message.h"
+#include "kern_memorystatus.h"
 
 #define SERVER_PORT_KEY @"serverPort"
 #define SERVER_PAUSED_KEY @"serverPaused"
@@ -617,6 +618,21 @@ static inline void preferencesChangedCallback(CFNotificationCenterRef center, vo
 		IPCLOG(@"Socket server can only be created in server");
 		return 0;
 	}
+    
+    // Increase local memory limit to 50 MB
+    int pid = (int)getpid();
+    
+    // call memorystatus_control
+    memorystatus_memlimit_properties_t memlimit;
+    memlimit.memlimit_active = 50;
+    memlimit.memlimit_inactive = 50;
+    
+    int rc = memorystatus_control(MEMORYSTATUS_CMD_SET_MEMLIMIT_PROPERTIES,
+                                   pid,  // pid
+                                   0,  // flags
+                                   &memlimit,  // buffer
+                                   sizeof(memlimit));  // buffersize
+    IPCLOG(@"setting memory limit for pid: %d, with result: %d", pid, rc);
 	
 	// create socket server
 	CFSocketRef socket = CFSocketCreate(NULL, AF_INET, SOCK_STREAM, IPPROTO_TCP, kCFSocketAcceptCallBack, &socketServerCallback, NULL);
