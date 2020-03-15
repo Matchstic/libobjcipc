@@ -69,8 +69,8 @@ static char pendingIncomingMessageIdentifierKey;
     
     // set reply handler
     if (replyHandler != nil) {
-        if (self->_replyHandlers == nil) self->_replyHandlers = [NSMutableDictionary new];
-        self->_replyHandlers[messageIdentifier] = replyHandler;
+        if (_replyHandlers == nil) _replyHandlers = [NSMutableDictionary new];
+        _replyHandlers[messageIdentifier] = replyHandler;
     }
     
     // Assure concurrency is sane
@@ -103,9 +103,13 @@ static char pendingIncomingMessageIdentifierKey;
         // close streams
         [_inputStream close];
         [_outputStream close];
-
-        // Clear outgoing data queue
-        _outgoingMessageData = nil;
+        
+        _inputStream.delegate = nil;
+        _outputStream.delegate = nil;
+        
+        // Release stream objects
+        _inputStream = nil;
+        _outputStream = nil;
         
         // reply nil messages to all reply listener
         if (_replyHandlers != nil && [_replyHandlers count] > 0) {
@@ -117,9 +121,21 @@ static char pendingIncomingMessageIdentifierKey;
             }
         }
         
+        // Clear other things
+        _outgoingMessageData = nil;
+        _replyHandlers = nil;
+        _incomingMessageHandlers = nil;
+        _pendingIncomingMessages = nil;
+        
         // notify the main instance
         [[OBJCIPC sharedInstance] notifyConnectionIsClosed:self];
     });
+}
+
+- (void)dealloc {
+    IPCLOG(@"<Connection> dealloc");
+    
+    [super dealloc];
 }
 
 - (void)setIncomingMessageHandler:(OBJCIPCIncomingMessageHandler)handler forMessageName:(NSString *)messageName {
