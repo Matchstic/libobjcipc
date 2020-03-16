@@ -93,12 +93,11 @@ static char pendingIncomingMessageIdentifierKey;
 }
 
 - (void)closeConnection {
-	
-    if (_closedConnection) return;
     
     // Dispatch on the queue to ensure concurrency
     dispatch_async(dispatch_get_main_queue(), ^{
         IPCLOG(@"<Connection> Close connection <%@>", self);
+        if (_closedConnection) return;
         _closedConnection = YES;
         
         // reset all receiving message state
@@ -127,7 +126,9 @@ static char pendingIncomingMessageIdentifierKey;
             for (NSString *key in _replyHandlers) {
                 OBJCIPCReplyHandler handler = _replyHandlers[key];
                 if (handler != nil) {
-                    handler(nil);
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        handler(nil);
+                    });
                 }
             }
         }
@@ -473,12 +474,15 @@ static char pendingIncomingMessageIdentifierKey;
 		// find the message reply handler
 		OBJCIPCReplyHandler handler = _replyHandlers[identifier];
 		if (handler != nil) {
-            handler(dictionary);
-			
-			IPCLOG(@"<Connection> Passed the received dictionary to reply handler");
-			
-			// release the reply handler
-			[_replyHandlers removeObjectForKey:identifier];
+            
+            dispatch_async(dispatch_get_main_queue(), ^{
+                handler(dictionary);
+                
+                IPCLOG(@"<Connection> Passed the received dictionary to reply handler");
+                
+                // release the reply handler
+                [_replyHandlers removeObjectForKey:identifier];
+            });
 		}
 		
 	} else {
@@ -527,10 +531,12 @@ static char pendingIncomingMessageIdentifierKey;
 		IPCLOG(@"<Connection> Pass the received dictionary to incoming message handler");
         
         if (!_closedConnection) {
-            handler(dictionary, ^(NSDictionary *reply) {
-                // send reply as a new message
-                OBJCIPCMessage *message = [OBJCIPCMessage outgoingMessageWithMessageName:name dictionary:reply messageIdentifier:identifier isReply:YES replyHandler:nil];
-                [self sendMessage:message];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                handler(dictionary, ^(NSDictionary *reply) {
+                    // send reply as a new message
+                    OBJCIPCMessage *message = [OBJCIPCMessage outgoingMessageWithMessageName:name dictionary:reply messageIdentifier:identifier isReply:YES replyHandler:nil];
+                    [self sendMessage:message];
+                });
             });
         }
 
@@ -599,7 +605,7 @@ static char pendingIncomingMessageIdentifierKey;
 - (void)_createAutoDisconnectTimer {
     if (_autoDisconnectTimer == nil) {
         // ticks every minute
-        _autoDisconnectTimer = [[NSTimer scheduledTimerWithTimeInterval:OBJCIPC_AUTODISCONNECT_TICKTIME target:self selector:@selector(_autoDisconnectTimerTicks) userInfo:nil repeats:YES] retain];
+        _autoDisconnectTimer = [NSTimer scheduledTimerWithTimeInterval:OBJCIPC_AUTODISCONNECT_TICKTIME target:self selector:@selector(_autoDisconnectTimerTicks) userInfo:nil repeats:YES];
     }
 }
 
