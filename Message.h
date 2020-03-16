@@ -21,7 +21,7 @@
 @property(nonatomic, copy) NSString *messageIdentifier;
 @property(nonatomic, copy) OBJCIPCReplyHandler replyHandler;
 @property(nonatomic, copy) NSString *messageName;
-@property(nonatomic, retain) NSDictionary *dictionary;
+@property(nonatomic, strong) NSDictionary *dictionary;
 
 // construct new messages
 + (instancetype)handshakeMessageWithDictionary:(NSDictionary *)dictionary;

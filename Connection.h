@@ -8,9 +8,7 @@
 
 #import "header.h"
 
-@interface OBJCIPCConnection : NSObject<NSStreamDelegate> {
-    dispatch_queue_t _dispatchQueue;
-    
+@interface OBJCIPCConnection : NSObject<NSStreamDelegate> {    
 	BOOL _closedConnection;
 	BOOL _handshakeFinished;
 	NSString *_appIdentifier;
@@ -51,7 +49,7 @@
 
 @property(nonatomic, copy) NSString *appIdentifier;
 @property(nonatomic, readonly) NSMutableDictionary *incomingMessageHandlers;
-@property(nonatomic, retain) NSMutableDictionary *replyHandlers;
+@property(nonatomic, strong) NSMutableDictionary *replyHandlers;
 
 - (instancetype)initWithInputStream:(NSInputStream *)inputStream
                        outputStream:(NSOutputStream *)outputStream;

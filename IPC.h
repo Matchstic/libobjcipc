@@ -29,12 +29,12 @@
 @property(nonatomic) BOOL activatedForReconnection;
 @property(nonatomic) NSUInteger serverPort;
 @property(nonatomic, copy) void (^reconnectionHandler)(void); 
-@property(nonatomic, retain) NSMutableDictionary *processAssertions;
-@property(nonatomic, retain) NSMutableSet *pendingConnections;
-@property(nonatomic, retain) NSMutableDictionary *activeConnections;
-@property(nonatomic, retain) NSMutableDictionary *globalIncomingMessageHandlers;
-@property(nonatomic, retain) NSMutableDictionary *incomingMessageHandlers;
-@property(nonatomic, retain) NSMutableDictionary *outgoingMessageQueue;
+@property(nonatomic, strong) NSMutableDictionary *processAssertions;
+@property(nonatomic, strong) NSMutableSet *pendingConnections;
+@property(nonatomic, strong) NSMutableDictionary *activeConnections;
+@property(nonatomic, strong) NSMutableDictionary *globalIncomingMessageHandlers;
+@property(nonatomic, strong) NSMutableDictionary *incomingMessageHandlers;
+@property(nonatomic, strong) NSMutableDictionary *outgoingMessageQueue;
 
 // process checking methods
 + (BOOL)isServer;
