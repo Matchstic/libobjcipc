@@ -146,8 +146,6 @@ static char pendingIncomingMessageIdentifierKey;
 
 - (void)dealloc {
     IPCLOG(@"<Connection> dealloc");
-    
-    [super dealloc];
 }
 
 - (void)setIncomingMessageHandler:(OBJCIPCIncomingMessageHandler)handler forMessageName:(NSString *)messageName {
