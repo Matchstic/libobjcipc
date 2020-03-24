@@ -17,6 +17,7 @@
 #include "kern_memorystatus.h"
 
 #define SERVER_PORT_KEY @"serverPort"
+#define CACHE_BASE_PATH @"/var/mobile/Library/Caches"
 
 /*
  Note: CFPreferences is used to synchronise state between server and clients when they are not connected
@@ -107,16 +108,21 @@ static inline void preferencesChangedCallback(CFNotificationCenterRef center, vo
 	if (ipc.activated) return; // only activate once
 	
 	IPCLOG(@"Activating OBJCIPC");
+    
+    NSString *cachePath = [NSString stringWithFormat:@"%@/%@.plist", CACHE_BASE_PATH, SERVER_ID];
 	
 	if ([self isServer]) {
 	
 		// create socket server
 		ipc.serverPort = [ipc _createSocketServer];
 		      
-        // Write to CFPreferences
-        CFPreferencesSetValue ((__bridge CFStringRef)SERVER_PORT_KEY, (__bridge CFPropertyListRef)@(ipc.serverPort), (__bridge CFStringRef)SERVER_ID, kCFPreferencesCurrentUser, kCFPreferencesCurrentHost);
+        // Write to cache
+        NSMutableDictionary *cache = [NSMutableDictionary dictionaryWithContentsOfFile:cachePath];
+        if (!cache) cache = [NSMutableDictionary dictionary];
         
-        CFPreferencesAppSynchronize((__bridge CFStringRef)SERVER_ID);
+        [cache setObject:@(ipc.serverPort) forKey:SERVER_PORT_KEY];
+        
+        [cache writeToFile:cachePath atomically:YES];
         
         // Post notification that the serverPort has changed
         CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), SETTINGS_NOTIFICATION, NULL, NULL, YES);
@@ -124,25 +130,14 @@ static inline void preferencesChangedCallback(CFNotificationCenterRef center, vo
 	} else if ([self isApp]) {
 		
 		// get the port number of socket server
-        CFPreferencesAppSynchronize((__bridge CFStringRef)SERVER_ID);
-        
-        NSDictionary *settings;
-        CFArrayRef keyList = CFPreferencesCopyKeyList((__bridge CFStringRef)SERVER_ID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-        if (!keyList) {
-            settings = [NSMutableDictionary dictionary];
-        } else {
-            CFDictionaryRef dictionary = CFPreferencesCopyMultiple(keyList, (__bridge CFStringRef)SERVER_ID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-            
-            settings = [(__bridge NSDictionary *)dictionary copy];
-            CFRelease(dictionary);
-            CFRelease(keyList);
-        }
+        NSMutableDictionary *cache = [NSMutableDictionary dictionaryWithContentsOfFile:cachePath];
+        if (!cache) cache = [NSMutableDictionary dictionary];
         
         // Add preferences observer to cause a re-connection to the server
         CFNotificationCenterRef r = CFNotificationCenterGetDarwinNotifyCenter();
         CFNotificationCenterAddObserver(r, NULL, preferencesChangedCallback, SETTINGS_NOTIFICATION, NULL, 0);
         
-		NSNumber *port = settings[SERVER_PORT_KEY];
+        NSNumber *port = [cache objectForKey:SERVER_PORT_KEY];
 		
 		if (port == nil) {
 			IPCLOG(@"Unable to retrieve server port from preference file");
