@@ -401,15 +401,23 @@ static inline void preferencesChangedCallback(CFNotificationCenterRef center, vo
     if (self) {        
         // Setup UIKit listeners
         if ([OBJCIPC isApp]) {
+            // Enter background
             [[NSNotificationCenter defaultCenter] addObserver:self
                                                         selector:@selector(applicationDidEnterBackground:)
                                                             name:@"UIApplicationDidEnterBackgroundNotification"
                                                           object:nil];
             
+            // Enter foreground
             [[NSNotificationCenter defaultCenter] addObserver:self
                                                     selector:@selector(applicationDidEnterForeground:)
                                                         name:@"UIApplicationDidEnterForegroundNotification"
                                                       object:nil];
+            
+            // Terminate
+            [[NSNotificationCenter defaultCenter] addObserver:self
+                                                     selector:@selector(applicationWillTerminate:)
+                                                         name:@"UIApplicationWillTerminateNotification"
+                                                       object:nil];
         }
     }
     
@@ -690,6 +698,11 @@ static inline void preferencesChangedCallback(CFNotificationCenterRef center, vo
 - (void)applicationDidEnterForeground:(NSNotification*)sender {
     IPCLOG(@"Sending application did enter foreground");
     [OBJCIPC activate];
+}
+
+- (void)applicationWillTerminate:(NSNotification*)sender  {
+    IPCLOG(@"Received UIApplicationWillTerminateNotification");
+    [OBJCIPC deactivate];
 }
 
 @end
